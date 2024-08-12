@@ -1,0 +1,290 @@
+import streamlit as st
+
+# Load your HTML content
+html_content = """
+<!DOCTYPE html>
+<html><head><base href="https://websim.io/tree_visualizer/" />
+<title>Decision Tree Visualizer</title>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #f4f4f4;
+}
+
+h1, h2 {
+    color: #2c3e50;
+}
+
+form {
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+select, input[type="submit"] {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+input[type="submit"] {
+    background-color: #3498db;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+input[type="submit"]:hover {
+    background-color: #2980b9;
+}
+
+#tree-container {
+    margin-top: 20px;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.node {
+    cursor: pointer;
+}
+
+.node circle {
+    fill: #fff;
+    stroke: steelblue;
+    stroke-width: 3px;
+}
+
+.node text {
+    font: 12px sans-serif;
+}
+
+.link {
+    fill: none;
+    stroke: #ccc;
+    stroke-width: 2px;
+}
+</style>
+<script src="https://d3js.org/d3.v5.min.js"></script>
+</head>
+<body>
+    <h1>Decision Tree Visualizer</h1>
+    
+    <form id="prediction-form" action="/predict" method="post">
+        <h2>Make a Prediction</h2>
+        <label for="outlook">Outlook:</label>
+        <select name="outlook" id="outlook">
+            <option value="sunny">Sunny</option>
+            <option value="overcast">Overcast</option>
+            <option value="rainy">Rainy</option>
+        </select>
+
+        <label for="temp">Temperature:</label>
+        <select name="temp" id="temp">
+            <option value="hot">Hot</option>
+            <option value="mild">Mild</option>
+            <option value="cool">Cool</option>
+        </select>
+
+        <label for="humidity">Humidity:</label>
+        <select name="humidity" id="humidity">
+            <option value="high">High</option>
+            <option value="normal">Normal</option>
+        </select>
+
+        <label for="windy">Windy:</label>
+        <select name="windy" id="windy">
+            <option value="True">Yes</option>
+            <option value="False">No</option>
+        </select>
+
+        <input type="submit" value="Predict">
+    </form>
+
+    <form id="compare-form" action="/compare" method="post">
+        <h2>Compare Feature Importance</h2>
+        <p>Drag and drop to reorder features:</p>
+        <ul id="feature-list">
+            <li><input type="hidden" name="feature_order" value="outlook">Outlook</li>
+            <li><input type="hidden" name="feature_order" value="temp">Temperature</li>
+            <li><input type="hidden" name="feature_order" value="humidity">Humidity</li>
+            <li><input type="hidden" name="feature_order" value="windy">Windy</li>
+        </ul>
+        <input type="submit" value="Compare">
+    </form>
+
+    <div id="tree-container"></div>
+
+    <script>
+    // Make the feature list sortable
+    const featureList = document.getElementById('feature-list');
+    let draggedItem = null;
+
+    featureList.addEventListener('dragstart', (e) => {
+        draggedItem = e.target;
+        setTimeout(() => e.target.style.display = 'none', 0);
+    });
+
+    featureList.addEventListener('dragend', (e) => {
+        e.target.style.display = 'block';
+        draggedItem = null;
+    });
+
+    featureList.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const afterElement = getDragAfterElement(featureList, e.clientY);
+        const draggable = document.querySelector('.dragging');
+        if (afterElement == null) {
+            featureList.appendChild(draggedItem);
+        } else {
+            featureList.insertBefore(draggedItem, afterElement);
+        }
+    });
+
+    function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('li:not(.dragging)')];
+
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // Visualize the decision tree
+    function visualizeTree(treeData) {
+        const margin = {top: 20, right: 90, bottom: 30, left: 90};
+        const width = 600 - margin.left - margin.right;
+        const height = 500 - margin.top - margin.bottom;
+
+        const svg = d3.select("#tree-container").append("svg")
+            .attr("width", width + margin.right + margin.left)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+        const i = 0;
+        const duration = 750;
+        let root;
+
+        const treemap = d3.tree().size([height, width]);
+        root = d3.hierarchy(treeData, d => d.children);
+        root.x0 = height / 2;
+        root.y0 = 0;
+
+        update(root);
+
+        function update(source) {
+            const treeData = treemap(root);
+            const nodes = treeData.descendants();
+            const links = treeData.descendants().slice(1);
+
+            nodes.forEach(d => { d.y = d.depth * 180 });
+
+            const node = svg.selectAll('g.node')
+                .data(nodes, d => d.id || (d.id = ++i));
+
+            const nodeEnter = node.enter().append('g')
+                .attr('class', 'node')
+                .attr("transform", d => "translate(" + source.y0 + "," + source.x0 + ")")
+                .on('click', click);
+
+            nodeEnter.append('circle')
+                .attr('class', 'node')
+                .attr('r', 1e-6)
+                .style("fill", d => d._children ? "lightsteelblue" : "#fff");
+
+            nodeEnter.append('text')
+                .attr("dy", ".35em")
+                .attr("x", d => d.children || d._children ? -13 : 13)
+                .attr("text-anchor", d => d.children || d._children ? "end" : "start")
+                .text(d => d.data.name);
+
+            const nodeUpdate = nodeEnter.merge(node);
+
+            nodeUpdate.transition()
+                .duration(duration)
+                .attr("transform", d => "translate(" + d.y + "," + d.x + ")");
+
+            nodeUpdate.select('circle.node')
+                .attr('r', 10)
+                .style("fill", d => d._children ? "lightsteelblue" : "#fff")
+                .attr('cursor', 'pointer');
+
+            const nodeExit = node.exit().transition()
+                .duration(duration)
+                .attr("transform", d => "translate(" + source.y + "," + source.x + ")")
+                .remove();
+
+            nodeExit.select('circle')
+                .attr('r', 1e-6);
+
+            nodeExit.select('text')
+                .style('fill-opacity', 1e-6);
+
+            const link = svg.selectAll('path.link')
+                .data(links, d => d.id);
+
+            const linkEnter = link.enter().insert('path', "g")
+                .attr("class", "link")
+                .attr('d', d => {
+                    const o = {x: source.x0, y: source.y0}
+                    return diagonal(o, o)
+                });
+
+            const linkUpdate = linkEnter.merge(link);
+
+            linkUpdate.transition()
+                .duration(duration)
+                .attr('d', d => diagonal(d, d.parent));
+
+            const linkExit = link.exit().transition()
+                .duration(duration)
+                .attr('d', d => {
+                    const o = {x: source.x, y: source.y}
+                    return diagonal(o, o)
+                })
+                .remove();
+
+            nodes.forEach(d => {
+                d.x0 = d.x;
+                d.y0 = d.y;
+            });
+
+            function diagonal(s, d) {
+                return `M ${s.y} ${s.x}
+                        C ${(s.y + d.y) / 2} ${s.x},
+                          ${(s.y + d.y) / 2} ${d.x},
+                          ${d.y} ${d.x}`;
+            }
+
+            function click(d) {
+                if (d.children) {
+                    d._children = d.children;
+                    d.children = null;
+                } else {
+                    d.children = d._children;
+                    d._children = null
+"""
+
+# Display the HTML content in Streamlit
+st.components.v1.html(html_content, width=800, height=600)
